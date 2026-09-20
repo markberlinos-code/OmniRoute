@@ -65,7 +65,10 @@ jobs:
       - name: Trivy scan (advisory)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          # GHCR image refs are always lowercase; github.repository preserves
+          # the repo's actual casing (OmniRoute), so build it from the first
+          # already-lowercased tag instead of env.IMAGE_NAME.
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           severity: HIGH,CRITICAL
           exit-code: "0"
           ignore-unfixed: true
