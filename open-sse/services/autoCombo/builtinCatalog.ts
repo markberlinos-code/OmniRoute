@@ -43,6 +43,7 @@ export const AUTO_TEMPLATE_VARIANTS: Record<string, AutoVariant | undefined> = {
   "auto/smart": "smart",
   "auto/claude-opus": "smart",
   "auto/claude-sonnet": "coding",
+  "auto/claude-haiku": "fast",
   "auto/best-free": "cheap",
   // Chaos mode — parallel dispatch to top-N stable models
   "auto/best-chaos": "chaos",
