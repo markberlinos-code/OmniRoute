@@ -12,7 +12,10 @@
 import { getModelUpstreamExtraHeaders } from "@/lib/db/models";
 import { resolveModelAlias } from "../../services/modelDeprecation.ts";
 import { CPA_FORCE_FAST_MODE_HEADER, shouldRequestClaudeFastMode } from "@/lib/providers/claudeFastMode";
-import { isForbiddenCustomHeaderName } from "@/shared/constants/upstreamHeaders";
+import {
+  isForbiddenCustomHeaderName,
+  isValidHttpHeaderName,
+} from "@/shared/constants/upstreamHeaders";
 
 export function buildUpstreamHeadersForExecute(opts: {
   modelToCall: string;
@@ -66,6 +69,7 @@ export function buildUpstreamHeadersForExecute(opts: {
       const keyLower = key.trim().toLowerCase();
       if (!keyLower) continue;
       if (isForbiddenCustomHeaderName(key)) continue;
+      if (!isValidHttpHeaderName(key)) continue;
       const existingKey = Object.keys(upstreamHeaders).find(
         (k) => k.toLowerCase() === keyLower
       );
