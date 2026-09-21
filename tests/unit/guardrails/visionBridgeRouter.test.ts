@@ -65,27 +65,21 @@ test("getBestVisionModel — should exclude specified models", async () => {
 test("getBestVisionModel — excludes a candidate with no usable active connection", async () => {
   // Every candidate reports a confirmed-unusable connection (`false`) ->
   // no candidate survives -> returns null instead of an unreachable default.
-  const model = await getBestVisionModel(
-    {},
-    { hasUsableCredentials: async () => false }
-  );
+  const model = await getBestVisionModel({}, { hasUsableCredentials: async () => false });
   assert.equal(model, null);
 });
 
-test(
-  "getBestVisionModel — selects a credentialed candidate over an uncredentialed higher-priority one",
-  async () => {
-    // openai (priority 50, would normally win) has no usable connection;
-    // every other vision-capable provider does.
-    const model = await getBestVisionModel(
-      {},
-      {
-        hasUsableCredentials: async (fullModelId) => fullModelId.split("/")[0] !== "openai",
-      }
-    );
-    assert.equal(model.startsWith("openai/"), false);
-  }
-);
+test("getBestVisionModel — selects a credentialed candidate over an uncredentialed higher-priority one", async () => {
+  // openai (priority 50, would normally win) has no usable connection;
+  // every other vision-capable provider does.
+  const model = await getBestVisionModel(
+    {},
+    {
+      hasUsableCredentials: async (fullModelId) => fullModelId.split("/")[0] !== "openai",
+    }
+  );
+  assert.equal(model.startsWith("openai/"), false);
+});
 
 // ── getFallbackModels ───────────────────────────────────────────────────────
 
@@ -105,17 +99,79 @@ test("getFallbackModels — should respect max fallback attempts", async () => {
   assert.ok(fallbacks.length <= 2);
 });
 
-test(
-  "getFallbackModels — does not include candidates with a confirmed-unusable connection",
-  async () => {
-    const fallbacks = await getFallbackModels(
-      "openai/gpt-4o-mini",
-      {},
-      { hasUsableCredentials: async (fullModelId) => fullModelId.split("/")[0] !== "anthropic" }
-    );
-    assert.ok(!fallbacks.some((m) => m.startsWith("anthropic/")));
-  }
-);
+test("getFallbackModels — does not include candidates with a confirmed-unusable connection", async () => {
+  const fallbacks = await getFallbackModels(
+    "openai/gpt-4o-mini",
+    {},
+    { hasUsableCredentials: async (fullModelId) => fullModelId.split("/")[0] !== "anthropic" }
+  );
+  assert.ok(!fallbacks.some((m) => m.startsWith("anthropic/")));
+});
+
+// ── catalog scan caching (prod OOM 2026-09-21) ──────────────────────────────
+// Every getBestVisionModel()/getFallbackModels() call used to re-scan the whole
+// provider catalog (capability lookup per model + one credential check per
+// vision model). With no usable vision candidate the empty result was never
+// cached, so Claude Code retries of an image request re-ran the scan several
+// times per request and drove the process into a native-memory OOM.
+
+function countingDeps(result: boolean | null): {
+  deps: VisionBridgeRouterDepsT;
+  calls: () => number;
+} {
+  let n = 0;
+  return {
+    deps: {
+      hasUsableCredentials: async () => {
+        n++;
+        return result;
+      },
+    },
+    calls: () => n,
+  };
+}
+
+async function singleScanCost(result: boolean | null): Promise<number> {
+  clearSelectionCache();
+  const probe = countingDeps(result);
+  await getBestVisionModel({}, probe.deps);
+  clearSelectionCache();
+  return probe.calls();
+}
+
+test("catalog scan — concurrent and repeated lookups share one scan", async () => {
+  const perScan = await singleScanCost(null);
+  assert.ok(perScan > 0, "a scan must check at least one candidate");
+
+  const c = countingDeps(null);
+  await Promise.all([
+    getBestVisionModel({}, c.deps),
+    getBestVisionModel({}, c.deps),
+    getBestVisionModel({}, c.deps),
+    getBestVisionModel({ excludedModels: ["openai/gpt-4o"] }, c.deps),
+    getFallbackModels("openai/gpt-4o-mini", {}, c.deps),
+  ]);
+  await getFallbackModels("openai/gpt-4o", {}, c.deps);
+  assert.equal(c.calls(), perScan);
+});
+
+test("catalog scan — an empty result (no usable vision provider) is cached too", async () => {
+  const perScan = await singleScanCost(false);
+  const c = countingDeps(false);
+  assert.equal(await getBestVisionModel({}, c.deps), null);
+  assert.equal(await getBestVisionModel({}, c.deps), null);
+  assert.deepEqual(await getFallbackModels("openai/gpt-4o-mini", {}, c.deps), []);
+  assert.equal(c.calls(), perScan);
+});
+
+test("catalog scan — clearSelectionCache forces a fresh scan", async () => {
+  const perScan = await singleScanCost(null);
+  const c = countingDeps(null);
+  await getBestVisionModel({}, c.deps);
+  clearSelectionCache();
+  await getBestVisionModel({}, c.deps);
+  assert.equal(c.calls(), perScan * 2);
+});
 
 // ── recordLatency / getLatencyStats ─────────────────────────────────────────
 
