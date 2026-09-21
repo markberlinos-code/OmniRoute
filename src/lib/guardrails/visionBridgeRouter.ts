@@ -122,7 +122,70 @@ async function getVisionCapableModels(
   deps: VisionBridgeRouterDeps = {}
 ): Promise<VisionModelCandidate[]> {
   const checkCreds = deps.hasUsableCredentials ?? hasUsableCredentialsForModel;
-  const candidates: VisionModelCandidate[] = [];
+  const eligible = await getEligibleVisionModels(checkCreds);
+  // Latency / success rate are live signals: derive them per call from the cached
+  // eligibility list so selection still reacts to recordLatency() immediately.
+  return eligible.map((e) => ({
+    modelId: e.modelId,
+    fullName: e.fullName,
+    priority: e.priority,
+    averageLatencyMs: calculateAverageLatency(e.fullName),
+    lastUsedAt: 0,
+    successRate: calculateSuccessRate(e.fullName),
+  }));
+}
+
+type EligibleVisionModel = Pick<VisionModelCandidate, "modelId" | "fullName" | "priority">;
+type CredentialCheck = (model: string) => Promise<boolean | null>;
+
+/**
+ * The full-catalog scan below is expensive: one capability lookup per catalog model
+ * (~all providers) plus one DB-backed credential check per vision-capable model
+ * (~1.2k on a stock catalog). It used to run on EVERY getBestVisionModel() and
+ * getFallbackModels() call, and an empty result was never cached — so an image
+ * request with no usable vision provider re-scanned several times per request, and
+ * client retries (Claude Code resends every few seconds) drove the process into a
+ * native-memory OOM (prod incident 2026-09-21, route.mcp.az).
+ *
+ * The eligibility list (including an empty one) is now cached per credential-check
+ * function for ELIGIBILITY_CACHE_TTL_MS, and concurrent callers share one in-flight
+ * scan. Keyed by the check function so injected test doubles never share state with
+ * the production resolver.
+ */
+const ELIGIBILITY_CACHE_TTL_MS = 30_000;
+const eligibilityCache = new WeakMap<
+  CredentialCheck,
+  { expiresAt: number; generation: number; promise: Promise<EligibleVisionModel[]> }
+>();
+// Bumped by clearSelectionCache(); entries from an older generation are stale.
+let eligibilityGeneration = 0;
+
+function getEligibleVisionModels(checkCreds: CredentialCheck): Promise<EligibleVisionModel[]> {
+  const now = Date.now();
+  const cached = eligibilityCache.get(checkCreds);
+  if (cached && cached.expiresAt > now && cached.generation === eligibilityGeneration) {
+    return cached.promise;
+  }
+
+  const promise = scanEligibleVisionModels(checkCreds);
+  eligibilityCache.set(checkCreds, {
+    expiresAt: now + ELIGIBILITY_CACHE_TTL_MS,
+    generation: eligibilityGeneration,
+    promise,
+  });
+  // A failed scan must not be served from cache for the whole TTL.
+  promise.catch(() => {
+    if (eligibilityCache.get(checkCreds)?.promise === promise) {
+      eligibilityCache.delete(checkCreds);
+    }
+  });
+  return promise;
+}
+
+async function scanEligibleVisionModels(
+  checkCreds: CredentialCheck
+): Promise<EligibleVisionModel[]> {
+  const candidates: EligibleVisionModel[] = [];
   const checks: Array<Promise<void>> = [];
 
   for (const [providerAlias, models] of Object.entries(PROVIDER_MODELS)) {
@@ -157,14 +220,7 @@ async function getVisionCapableModels(
               priority = 75; // Other providers
             }
 
-            candidates.push({
-              modelId: model.id,
-              fullName: fullModelId,
-              priority,
-              averageLatencyMs: calculateAverageLatency(fullModelId),
-              lastUsedAt: 0,
-              successRate: calculateSuccessRate(fullModelId),
-            });
+            candidates.push({ modelId: model.id, fullName: fullModelId, priority });
           })
         );
       }
@@ -300,6 +356,12 @@ export async function getFallbackModels(
  */
 export function clearSelectionCache(): void {
   selectionCache.clear();
+  clearEligibilityCache();
+}
+
+function clearEligibilityCache(): void {
+  // WeakMap has no clear(); bumping the generation invalidates every entry.
+  eligibilityGeneration++;
 }
 
 /**
