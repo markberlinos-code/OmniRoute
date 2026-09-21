@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
+
+- **fix(guardrails): Vision Bridge catalog scan no longer exhausts memory.** `getBestVisionModel()` /
+  `getFallbackModels()` re-scanned the whole provider catalog (~1.2k DB-backed credential checks) on every call
+  and never cached an empty result, so an image request with no usable vision provider re-ran the scan several
+  times per request. Claude Code retries drove the process to a native-memory OOM (~2 GB RSS, 280 MB JS heap;
+  crash loop every ~2 min, 48 restarts). The eligibility list (including an empty one) is now cached for 30 s
+  and concurrent callers share one in-flight scan. Latency / success-rate signals stay live.
+  Test: 6 lookups cost 1236 credential checks instead of 7416.
+- **fix(security): upstream header names must be RFC 7230 tokens.** A browser password manager autofilled an
+  e-mail as a header name in the model Compatibility dialog; it passed validation and every request to that
+  model failed with `Headers.append: ... is an invalid header name` (502). Now rejected in the Zod schema and
+  ignored at read time in `sanitizeUpstreamHeadersMap`, the provider `customHeaders` applier and the
+  connection-level merge, so rows already in a DB stop breaking requests.
+- **fix(dashboard): built-in models missing from an authoritative live catalog are flagged** with a
+  "Not in live catalog" badge instead of looking usable (runtime rejects them with
+  `not available in the active live catalog`). Registry-first merge is unchanged.
+
 ### ✨ New Features
 
 - **feat(sse): STRICT_ZERO_COST** — opt-in, off-by-default `freeAccessPolicy: "strict"` setting
