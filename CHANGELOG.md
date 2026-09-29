@@ -4,6 +4,15 @@
 
 ### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
 
+- **fix(sse): advertise Claude Code 2.1.280 so Anthropic OAuth accepts Opus 5.5.** OmniRoute presented itself
+  to Anthropic as `claude-cli/2.1.220`; Anthropic's model gate rejects `claude-opus-5-5` from anything older than
+  2.1.280 (`400: Claude Code 2.1.220 does not support this model; version 2.1.280 or newer is required`), so
+  Opus 5.5 was unreachable through the connected Claude Max accounts while Sonnet 5.5 worked. Wire identity is
+  now version `2.1.280`, build revision `1e2`, SDK `0.112.1` (the same triple upstream ships in
+  `release/v3.8.51`, commit 34562bfd08). Pinned tests and the translate-path golden snapshot updated to match.
+  Verification: identity/version suites 43/43, golden + executor suites 54/54, live `claude/claude-opus-5-5`
+  request checked after deploy.
+
 - **fix(guardrails): Vision Bridge catalog scan no longer exhausts memory.** `getBestVisionModel()` /
   `getFallbackModels()` re-scanned the whole provider catalog (~1.2k DB-backed credential checks) on every call
   and never cached an empty result, so an image request with no usable vision provider re-ran the scan several
