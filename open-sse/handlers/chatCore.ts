@@ -9,10 +9,12 @@ import { buildFailureUsageRecord } from "./chatCore/failureUsage.ts";
 import { estimateFinalInputTokens } from "./chatCore/contextEstimation.ts";
 import {
   extractSystemRoleMessages,
+  hoistLeadingSystemMessages,
   relocateDirectiveOnlyMessages,
 } from "./chatCore/claudeSystemRole.ts";
 export {
   extractSystemRoleMessages,
+  hoistLeadingSystemMessages,
   relocateDirectiveOnlyMessages,
 } from "./chatCore/claudeSystemRole.ts";
 import { checkIdempotencyCache } from "./chatCore/idempotency.ts";
@@ -2313,6 +2315,9 @@ export async function handleChatCore({
           // output_config) at messages[0] is rejected by Anthropic. Move it past
           // the first real turn; Anthropic accepts the form at any other position.
           relocateDirectiveOnlyMessages(translatedBody);
+          // Any other system-role message left at messages[0] (e.g. a text notice) is
+          // rejected too; lift the leading run into the top-level `system` parameter.
+          hoistLeadingSystemMessages(translatedBody);
         }
         if (Array.isArray(translatedBody.messages)) {
           translatedBody.messages = splitMisplacedToolResults(
