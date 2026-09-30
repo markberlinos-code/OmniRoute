@@ -165,6 +165,37 @@ export function extractSystemRoleMessages(payload: Record<string, unknown>): voi
 }
 
 /**
+ * Lifts the leading run of system/developer messages off `messages[0]` into the top-level
+ * `system` parameter. Anthropic treats `messages[0]` as the initial-system-prompt position and
+ * rejects any system-role message there except the directive-only form, so text system messages
+ * (e.g. Claude Code's per-turn `<total_tokens>` notices) must not reach upstream in that slot.
+ * Later mid-conversation system messages are left in place.
+ */
+export function hoistLeadingSystemMessages(payload: Record<string, unknown>): void {
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) return;
+  const messages = payload.messages as Array<Record<string, unknown>>;
+  const isSystemRole = (m: Record<string, unknown>): boolean =>
+    m != null &&
+    typeof m === "object" &&
+    typeof m.role === "string" &&
+    (m.role.toLowerCase() === "system" || m.role.toLowerCase() === "developer");
+
+  let end = 0;
+  while (end < messages.length && isSystemRole(messages[end])) end++;
+  if (end === 0) return;
+
+  const lifted: Record<string, unknown> = {
+    messages: messages.slice(0, end),
+    system: payload.system,
+    output_config: payload.output_config,
+  };
+  extractSystemRoleMessages(lifted);
+  if (lifted.system !== undefined) payload.system = lifted.system;
+  if (lifted.output_config != null) payload.output_config = lifted.output_config;
+  payload.messages = messages.slice(end);
+}
+
+/**
  * Moves a directive-only system message (empty content array + message-level
  * `output_config`, the shape Claude Code clients emit) off `messages[0]`.
  *

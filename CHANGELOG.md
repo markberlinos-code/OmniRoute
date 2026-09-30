@@ -4,6 +4,19 @@
 
 ### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
 
+- **fix(sse): a system-role message at `messages[0]` no longer 400s Claude Opus/Sonnet 5.x.** Claude Code
+  sessions send text `system` messages (per-turn `<total_tokens>` notices) inside `messages[]`. On the direct
+  `claude` connection with the 1M-context mid-conversation-system path, only the empty directive form
+  (`content: []` + `output_config`) was moved off `messages[0]`; a text system message there went upstream
+  unchanged and Anthropic answered `400 messages.0: use the top-level 'system' parameter for the initial
+  system prompt`. Measured in production: 131 of these in 30 minutes on `claude-opus-5-5-team`, so the
+  combo silently fell back to DeepSeek (67 answers) or failed with 502 when the other targets were also down.
+  The leading run of system/developer messages is now lifted into the top-level `system` parameter
+  (`hoistLeadingSystemMessages`); later mid-conversation system messages stay in place. Reproduced live with a
+  Claude-Code-identified request before the fix. Tests: new `claude-leading-system-hoist` (5) plus the two
+  existing directive suites, 27/27; all `claude-*` unit tests 518/519 (`claude-web` fails identically on the
+  unmodified base: native-module crash on Windows); `typecheck:core` clean.
+
 - **fix(sse): advertise Claude Code 2.1.280 so Anthropic OAuth accepts Opus 5.5.** OmniRoute presented itself
   to Anthropic as `claude-cli/2.1.220`; Anthropic's model gate rejects `claude-opus-5-5` from anything older than
   2.1.280 (`400: Claude Code 2.1.220 does not support this model; version 2.1.280 or newer is required`), so
