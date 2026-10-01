@@ -221,6 +221,35 @@ export function stripHistoricalThinkingForSignatureRecovery<T>(body: T): T {
   return { ...record, messages: recoveredMessages } as T;
 }
 
+/**
+ * Last-resort recovery body: drop EVERY thinking block, including the active
+ * tool-use cycle, and disable extended thinking for this one request (the API
+ * rejects a tool_use turn without a leading thinking block while thinking is on).
+ * Used only after the conservative strip failed or changed nothing, i.e. the
+ * foreign-signed block sits inside the protected active cycle (a cross-provider
+ * fallback mid tool-loop). Returns the original reference when nothing changes.
+ */
+export function stripAllThinkingForSignatureRecovery<T>(body: T): T {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  if (!Array.isArray(record.messages)) return body;
+
+  let changed = false;
+  const messages = (record.messages as MessageLike[]).map((message) => {
+    if (!message || message.role !== "assistant" || !Array.isArray(message.content)) {
+      return message;
+    }
+    const content = message.content.filter((block) => !isThinkingBlock(block));
+    if (content.length === message.content.length) return message;
+    changed = true;
+    return { ...message, content };
+  });
+
+  if (!changed) return body;
+  const { thinking: _thinking, ...rest } = record;
+  return { ...rest, messages } as T;
+}
+
 type SignatureRecoveryExecution<T> = {
   result: T;
   retried: boolean;
@@ -252,15 +281,43 @@ export async function executeWithAnthropicThinkingSignatureRecovery<T>(args: {
     return { result: first, retried: false, recoveryBody: null };
   }
 
+  const isSigError = async (result: T) => {
+    const err = await args.getError(result);
+    return (
+      !!err &&
+      isAnthropicThinkingSignatureError({
+        provider: args.provider,
+        status: err.status,
+        message: err.message,
+      })
+    );
+  };
+
   const recoveryBody = stripHistoricalThinkingForSignatureRecovery(args.body);
-  if (recoveryBody === args.body) {
-    return { result: first, retried: false, recoveryBody: null };
+  let lastBody: unknown = args.body;
+  let lastResult: T = first;
+  let retried = false;
+
+  if (recoveryBody !== args.body) {
+    lastResult = await args.execute(recoveryBody);
+    lastBody = recoveryBody;
+    retried = true;
+    if (!(await isSigError(lastResult))) {
+      return { result: lastResult, retried, recoveryBody };
+    }
   }
 
+  // Foreign-signed block inside the protected active cycle: strip everything.
+  const fullBody = stripAllThinkingForSignatureRecovery(args.body);
+  if (fullBody === args.body || fullBody === lastBody) {
+    return retried
+      ? { result: lastResult, retried, recoveryBody: lastBody }
+      : { result: first, retried: false, recoveryBody: null };
+  }
   return {
-    result: await args.execute(recoveryBody),
+    result: await args.execute(fullBody),
     retried: true,
-    recoveryBody,
+    recoveryBody: fullBody,
   };
 }
 

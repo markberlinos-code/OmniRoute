@@ -4,6 +4,15 @@
 
 ### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
 
+- **fix(sse): escalate Anthropic thinking-signature recovery when foreign-signed blocks sit in active tool cycle.**
+  When a multi-turn conversation fell back to an alternate provider (e.g. DeepSeek, Kimi) and later returned to
+  `claude`, the previous provider's thinking blocks retained foreign signatures. The existing conservative recovery
+  kept thinking blocks in the active tool-use cycle verbatim to avoid breaking same-provider turns; however, when
+  the block inside that active cycle carried a foreign signature, the conservative retry still failed with
+  `400 Invalid signature in thinking block`. The recovery path now escalates: if conservative stripping fails or is
+  a no-op on a signature error, it strips all thinking blocks across the active cycle and disables the `thinking`
+  parameter for that retry attempt so the turn continues gracefully. Tests: 10/10 in `anthropic-thinking-signature-recovery.test.ts`.
+
 - **fix(sse): a system-role message at `messages[0]` no longer 400s Claude Opus/Sonnet 5.x.** Claude Code
   sessions send text `system` messages (per-turn `<total_tokens>` notices) inside `messages[]`. On the direct
   `claude` connection with the 1M-context mid-conversation-system path, only the empty directive form

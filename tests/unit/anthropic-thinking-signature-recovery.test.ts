@@ -173,7 +173,7 @@ test("Anthropic thinking-signature recovery contract", async (t) => {
     assert.equal(out.attempted, true);
     assert.equal(out.succeeded, false);
     assert.equal(out.error?.statusCode, 400);
-    assert.equal(parses, 1, "parse the terminal recovery response exactly once");
+    assert.equal(parses, 2, "each recovery attempt response is parsed once (conservative + full strip)");
   });
 
   await t.test("normal same-model traffic is byte-identical and never retried", async () => {
@@ -261,10 +261,54 @@ test("Anthropic thinking-signature recovery contract", async (t) => {
 
     assert.equal(out.retried, true);
     assert.equal(out.result.status, 400);
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 3, "initial call + conservative strip + one full-strip escalation, then stop");
   });
 
-  await t.test("unsafe recovery with only active-cycle thinking sends no retry", async () => {
+  await t.test("foreign-signed block in the active cycle: escalates to full strip", async () => {
+    const body = {
+      thinking: { type: "enabled", budget_tokens: 1024 },
+      messages: [
+        { role: "user", content: [{ type: "text", text: "run" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "x", signature: "FOREIGN" },
+            { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
+          ],
+        },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
+        },
+      ],
+    };
+    const snapshot = structuredClone(body);
+    const calls: any[] = [];
+    const out = await executeWithAnthropicThinkingSignatureRecovery({
+      provider: "claude",
+      body,
+      execute: async (requestBody) => {
+        calls.push(requestBody);
+        const hasThinking = JSON.stringify(requestBody).includes('"type":"thinking"');
+        return hasThinking
+          ? { status: 400, message: "Invalid signature in thinking block" }
+          : { status: 200, message: "ok" };
+      },
+      getError: (result) => (result.status >= 400 ? result : null),
+    });
+
+    assert.equal(out.retried, true);
+    assert.equal(out.result.status, 200);
+    assert.equal(calls.length, 2);
+    assert.equal("thinking" in calls[1], false, "extended thinking disabled for the retry");
+    assert.deepEqual(
+      calls[1].messages[1].content.map((b: { type: string }) => b.type),
+      ["tool_use"]
+    );
+    assert.deepEqual(body, snapshot, "caller body is not mutated");
+  });
+
+  await t.test("active-cycle thinking: conservative strip is a no-op, full strip is used", async () => {
     const body = {
       messages: [
         { role: "user", content: [{ type: "text", text: "run" }] },
@@ -292,8 +336,8 @@ test("Anthropic thinking-signature recovery contract", async (t) => {
       getError: (result) => result,
     });
 
-    assert.equal(out.retried, false);
-    assert.equal(attempts, 1);
+    assert.equal(out.retried, true);
+    assert.equal(attempts, 2, "initial call + the full-strip retry");
     assert.equal(stripHistoricalThinkingForSignatureRecovery(body), body);
   });
 });
