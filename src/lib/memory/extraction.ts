@@ -1,7 +1,8 @@
 /**
- * Fact extraction from user messages.
- * Parses text for user preferences, decisions, and patterns.
- * Stores extracted facts asynchronously (non-blocking).
+ * Regex fact extraction (preferences, decisions, patterns) from a text the caller
+ * vouches for as the user's own words. Not wired into chat traffic: chat text mixes
+ * speakers (Claude Code's classifier wraps model replies inside a user turn), so the
+ * first-person patterns stored model narration as user facts.
  */
 
 import { logger } from "../../../open-sse/utils/logger.ts";
@@ -150,12 +151,10 @@ export function extractFactsFromText(text: string): ExtractedFact[] {
 }
 
 /**
- * Extract facts from the user's turn and store them asynchronously.
- * Non-blocking: fires-and-forgets via setImmediate.
- * Never pass model output here: the first-person patterns would store the model's own
- * plan ("I'll use X") as a user fact and re-inject it into later requests.
+ * Extract facts and store them asynchronously (fire-and-forget via setImmediate).
+ * Only pass text known to be the user's own words, never model output or chat transcripts.
  *
- * @param response - The user message text to parse
+ * @param response - The user-authored text to parse
  * @param apiKeyId - API key owning this memory
  * @param sessionId - Session context for the memory
  */

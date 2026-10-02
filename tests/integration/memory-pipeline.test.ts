@@ -100,89 +100,52 @@ test("first request proceeds without injected context when the store is empty", 
   assert.equal(fetchCalls[0].messages[0].content, "First turn");
 });
 
-test("successful requests extract the user's stated facts and persist them as memories", async () => {
-  await seedConnection("openai", { apiKey: "sk-openai-extract" });
-  const apiKey = await seedApiKey();
-  await enableMemory();
+// Chat traffic must never write memories on its own. Regex extraction over chat text
+// cannot tell who is speaking: Claude Code's auto-mode classifier sends the whole session
+// (model replies included) as one user turn wrapped in <transcript>, so even user-turn-only
+// extraction stored the model's narration ("I'll use the Agent tool…") as user facts.
+// Memories are written only on purpose, via the memory_save tool / MCP / API.
+for (const [label, userText] of [
+  ["a plain user turn", "I prefer concise answers. I usually read answers in bullet points."],
+  [
+    "a <transcript> classifier turn carrying model replies",
+    '<transcript>\n{"user":"fix it"}\n{"assistant":"I\'ll use the Agent tool with parallel ' +
+      'subagents instead of Workflow. I always run a web search before answering."}\n</transcript>',
+  ],
+]) {
+  test(`chat requests never auto-extract memories from ${label}`, async () => {
+    await seedConnection("openai", { apiKey: `sk-openai-no-extract-${label.length}` });
+    const apiKey = await seedApiKey();
+    await enableMemory();
 
-  globalThis.fetch = async () => buildOpenAIResponse("Noted.");
+    globalThis.fetch = async () =>
+      buildOpenAIResponse("I'll use Zod for the schemas. I always answer with code samples.");
 
-  const response = await handleChat(
-    buildRequest({
-      authKey: apiKey.key,
-      headers: { "x-omniroute-session-id": "session-extract" },
-      body: {
-        model: "openai/gpt-4o-mini",
-        stream: false,
-        messages: [
-          {
-            role: "user",
-            content: "I prefer concise answers. I usually read answers in bullet points.",
-          },
-        ],
-      },
-    })
-  );
-
-  const memories = await waitFor(async () => {
-    dropFts5Artifacts();
-    const result = await listMemories({ apiKeyId: apiKey.id });
-    const list = Array.isArray(result) ? result : (result.data ?? []);
-    return list.length >= 2 ? list : null;
-  }, 5000);
-
-  assert.equal(response.status, 200);
-  assert.ok(memories, "expected extracted memories to be stored");
-  assert.ok(memories.some((memory) => /concise answers/i.test(memory.content)));
-  assert.ok(memories.some((memory) => /bullet points/i.test(memory.content)));
-  assert.ok(memories.every((memory) => memory.sessionId === "session-extract"));
-});
-
-test("the model's own first-person narration is never stored as a user memory", async () => {
-  await seedConnection("openai", { apiKey: "sk-openai-self-narration" });
-  const apiKey = await seedApiKey();
-  await enableMemory();
-
-  // Agentic models narrate their plan in the first person. Captured from these replies,
-  // "I'll use X" / "I always X" became cross-project "Memory context:" instructions.
-  globalThis.fetch = async () =>
-    buildOpenAIResponse(
-      "I'll use the Agent tool with parallel subagents instead of Workflow. " +
-        "I always run a web search before answering."
+    const response = await handleChat(
+      buildRequest({
+        authKey: apiKey.key,
+        headers: { "x-omniroute-session-id": "session-no-extract" },
+        body: {
+          model: "openai/gpt-4o-mini",
+          stream: false,
+          messages: [{ role: "user", content: userText }],
+        },
+      })
     );
+    assert.equal(response.status, 200);
 
-  const response = await handleChat(
-    buildRequest({
-      authKey: apiKey.key,
-      headers: { "x-omniroute-session-id": "session-self-narration" },
-      body: {
-        model: "openai/gpt-4o-mini",
-        stream: false,
-        messages: [{ role: "user", content: "I prefer short answers." }],
-      },
-    })
-  );
-  assert.equal(response.status, 200);
-
-  // The user's own preference proves extraction ran for this turn...
-  const memories = await waitFor(async () => {
+    // Extraction used to run via setImmediate; give any such write time to land.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     dropFts5Artifacts();
     const result = await listMemories({ apiKeyId: apiKey.id });
     const list = Array.isArray(result) ? result : (result.data ?? []);
-    return list.some((memory) => /short answers/i.test(memory.content)) ? list : null;
-  }, 5000);
-  assert.ok(memories, "expected the user's preference to be stored");
-
-  // ...and the model's narration must not have been stored alongside it.
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  dropFts5Artifacts();
-  const settled = await listMemories({ apiKeyId: apiKey.id });
-  const settledList = Array.isArray(settled) ? settled : (settled.data ?? []);
-  assert.ok(
-    settledList.every((memory) => !/Agent tool|web search/i.test(memory.content)),
-    `model narration leaked into memory: ${JSON.stringify(settledList.map((m) => m.content))}`
-  );
-});
+    assert.deepEqual(
+      list.map((memory) => memory.content),
+      [],
+      "chat traffic must not create memories"
+    );
+  });
+}
 
 test("later requests inject retrieved memories into upstream messages", async () => {
   await seedConnection("openai", { apiKey: "sk-openai-inject" });
@@ -470,35 +433,28 @@ test("memory clear removes all stored memories for an API key", async () => {
   assert.equal(remainingList.length, 0);
 });
 
-test("extracted memories remain isolated by session id", async () => {
-  await seedConnection("openai", { apiKey: "sk-openai-session-memory" });
+test("stored memories remain isolated by session id", async () => {
   const apiKey = await seedApiKey();
   await enableMemory();
 
-  globalThis.fetch = async () => buildOpenAIResponse("Noted.");
-  await handleChat(
-    buildRequest({
-      authKey: apiKey.key,
-      headers: { "x-omniroute-session-id": "session-a" },
-      body: {
-        model: "openai/gpt-4o-mini",
-        stream: false,
-        messages: [{ role: "user", content: "I prefer tea." }],
-      },
-    })
-  );
-
-  await handleChat(
-    buildRequest({
-      authKey: apiKey.key,
-      headers: { "x-omniroute-session-id": "session-b" },
-      body: {
-        model: "openai/gpt-4o-mini",
-        stream: false,
-        messages: [{ role: "user", content: "I prefer coffee." }],
-      },
-    })
-  );
+  await createMemory({
+    apiKeyId: apiKey.id,
+    sessionId: "session-a",
+    type: "factual",
+    key: "preference:tea",
+    content: "tea",
+    metadata: {},
+    expiresAt: null,
+  });
+  await createMemory({
+    apiKeyId: apiKey.id,
+    sessionId: "session-b",
+    type: "factual",
+    key: "preference:coffee",
+    content: "coffee",
+    metadata: {},
+    expiresAt: null,
+  });
 
   const sessionAMemories = await waitFor(async () => {
     dropFts5Artifacts();

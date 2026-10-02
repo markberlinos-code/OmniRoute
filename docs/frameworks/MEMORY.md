@@ -10,10 +10,11 @@ lastUpdated: 2026-06-28
 > **Last updated:** 2026-06-28 — v3.8.40 (off-by-default + int8 quantization catch-up)
 
 OmniRoute provides persistent conversational memory keyed by API key (and
-optionally session id). Memories are extracted automatically from the user's
-own messages via lightweight regex pattern matching and injected back into subsequent
-requests as a leading system message (or first user message for providers that
-reject the system role).
+optionally session id). Memories are written on purpose — through the
+`memory_save` / `memory_update` builtin tools, the MCP memory tools, or the
+`/api/memory` API — and injected back into subsequent requests as a leading
+system message (or first user message for providers that reject the system role).
+Chat traffic is **not** mined for facts automatically (see "Fact Extraction").
 
 > **Memory is OFF by default (v3.8.30+).** `DEFAULT_MEMORY_SETTINGS.enabled` is
 > now `false` (`src/lib/memory/settings.ts`). Enabling memory injects up to
@@ -42,14 +43,12 @@ Client → /v1/chat/completions (apiKeyInfo resolved upstream)
     → retrieveMemories(apiKeyId, config)      # SQL + FTS5 + optional vector
     → injectMemory(body, memories, provider)  # system or user message
   → upstream provider call
-  → on success: extractFacts(lastUserText, apiKeyId, sessionId)  # non-blocking
-    → setImmediate → createMemory(fact) per match
-                   → embed(content) + upsertVector(id, vec)
+memory_save tool / MCP tool / POST /api/memory
+  → createMemory(fact) → embed(content) + upsertVector(id, vec)
 ```
 
-The injection and extraction call-sites are wired in
-`open-sse/handlers/chatCore.ts` (look for `retrieveMemories`, `injectMemory`,
-and `extractFacts`).
+The injection call-site is wired in `open-sse/handlers/chatCore.ts` (look for
+`retrieveMemories` and `injectMemory`).
 
 ## Engine architecture (3-tier resolution)
 
@@ -328,8 +327,16 @@ and scope is one of `session`, `apiKey`, or `global`. The default scope from
 
 ## Fact Extraction (`extraction.ts`)
 
+> **Not run on chat traffic.** Earlier versions scanned every chat exchange with
+> the patterns below. Chat text mixes speakers — an agent's reply narrates its
+> own plan ("I'll use the Agent tool…"), and Claude Code's auto-mode classifier
+> sends the whole session, model replies included, inside one user turn — so the
+> first-person patterns stored model narration as user facts and re-injected it
+> into every later request on the same API key. `extractFacts()` is kept as a
+> library helper for callers that can vouch the text is the user's own words.
+
 Extraction is **regex-based**, not LLM-based — it runs in-process with
-`setImmediate()` so it never blocks the response stream:
+`setImmediate()` so it never blocks the caller:
 
 - **Preference patterns** → `MemoryType.FACTUAL`
   (e.g. `I prefer …`, `I really like …`, `my favorite is …`, `I hate …`)
@@ -337,11 +344,6 @@ Extraction is **regex-based**, not LLM-based — it runs in-process with
   (e.g. `I'll use …`, `I chose …`, `I went with …`, `I'm going to adopt …`)
 - **Pattern patterns** → `MemoryType.FACTUAL`
   (e.g. `I usually …`, `I always …`, `I tend to …`)
-
-Only the last user turn of the request is scanned — never the model's reply.
-The patterns are first-person, so on model output they capture the model's own
-plan (`I'll use the Agent tool…`) and re-inject it into later requests as if the
-user had said it.
 
 Each match is sanitised (`trim`, whitespace-collapse, capped at 500 chars),
 deduplicated within the batch via a stable `factKey(category, content)`, and
@@ -583,7 +585,7 @@ default TTL 5 min).
 
 - Memory ownership is the API key id (`resolveMemoryOwnerId` in
   `chatCore.ts`). Without an `apiKeyInfo.id` neither retrieval nor injection
-  nor extraction runs.
+  runs.
 - Entries with a future `expires_at` are filtered out of retrieval; old
   entries beyond `retentionDays` are excluded by the
   `created_at >= cutoff` clause in `retrieveMemories`.
@@ -707,7 +709,7 @@ Benchmark on a typical 4-core x86 server (texts ~100 tokens each):
 
 ## Fact Extraction Patterns (v3.8.16+)
 
-The `extraction.ts` module (`src/lib/memory/extraction.ts`) uses **regex pattern matching** to extract structured facts from the user's messages. Understanding these patterns helps you tune extraction quality for your use case.
+The `extraction.ts` module (`src/lib/memory/extraction.ts`) uses **regex pattern matching** to extract structured facts from a text the caller passes in. It is not run on chat traffic (see "Fact Extraction" above).
 
 ### Default Pattern Categories
 
@@ -753,16 +755,6 @@ To prevent runaway extraction, the following limits apply:
 
 | Min content length | 3 chars |
 | Max content length | 500 chars |
-
-### When to Disable Extraction
-
-Extraction runs automatically whenever memory is enabled; there is no separate
-extraction-only toggle. To turn it off, disable memory entirely (`enabled: false`
-via `PUT /api/settings/memory`). Consider doing so when:
-
-- You have high message volume and the extraction cost is non-trivial
-- Your conversations are mostly transient (chat, debugging) with no long-term value
-- You're already capturing context via custom plugins
 
 ---
 

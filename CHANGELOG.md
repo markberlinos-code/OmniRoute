@@ -4,6 +4,19 @@
 
 ### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
 
+- **fix(memory): chat traffic no longer writes memories automatically.** The user-turn-only fix below
+  was not enough in production: within minutes of deploying it, 20 junk facts ("the Agent tool",
+  "run a web search before answering", …) reappeared, now tagged `source: "user_message"`. The writer
+  was Claude Code's auto-mode security classifier, which sends the whole session — model replies
+  included — as a single user turn wrapped in `<transcript>`; 28 of the first 39 requests after the
+  deploy had that shape. Chat text mixes speakers, so first-person regex extraction over it cannot be
+  made safe. Automatic extraction is removed from both the non-stream and stream paths
+  (`extractMemoryTextFromRequestBody` deleted); memories are now written only on purpose, through the
+  `memory_save`/`memory_update` builtin tools, the MCP memory tools or `/api/memory`. Retrieval and
+  injection are unchanged. `extractFacts()` stays as a library helper. Tests: the `<transcript>` and
+  plain-turn regressions failed before the change; memory suites 492/492 (node) + 79/79 (vitest);
+  `typecheck:core` clean.
+
 - **fix(memory): stop storing the model's own narration as user memory and stop splitting tool cycles.**
   Claude Code sessions kept receiving instructions nobody gave, framed as `Memory context: …` (e.g. "the
   Agent tool with parallel subagents instead of Workflow", "User asked to perform a web search for …"),
