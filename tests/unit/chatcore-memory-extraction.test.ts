@@ -2,52 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  extractMemoryTextFromResponse,
   extractMemoryTextFromRequestBody,
   resolveMemoryOwnerId,
 } from "../../open-sse/handlers/chatCore/memoryExtraction.ts";
-
-test("extractMemoryTextFromResponse reads OpenAI choices[0].message.content (trimmed)", () => {
-  assert.equal(
-    extractMemoryTextFromResponse({ choices: [{ message: { content: "  hi  " } }] }),
-    "hi"
-  );
-});
-
-test("extractMemoryTextFromResponse joins Claude content text blocks and skips non-text", () => {
-  assert.equal(
-    extractMemoryTextFromResponse({
-      content: [
-        { type: "text", text: " a " },
-        { type: "image" },
-        { type: "text", text: "b" },
-      ],
-    }),
-    "a\nb"
-  );
-});
-
-test("extractMemoryTextFromResponse falls back to Responses output_text", () => {
-  assert.equal(extractMemoryTextFromResponse({ output_text: " out " }), "out");
-});
-
-test("extractMemoryTextFromResponse returns empty string for null/empty/no-text shapes", () => {
-  assert.equal(extractMemoryTextFromResponse(null), "");
-  assert.equal(extractMemoryTextFromResponse(undefined), "");
-  assert.equal(extractMemoryTextFromResponse({}), "");
-  // content array with no text parts -> contentText is "" -> falls through to ""
-  assert.equal(extractMemoryTextFromResponse({ content: [{ type: "image" }] }), "");
-});
-
-test("extractMemoryTextFromResponse prefers OpenAI content over output_text", () => {
-  assert.equal(
-    extractMemoryTextFromResponse({
-      choices: [{ message: { content: "openai" } }],
-      output_text: "responses",
-    }),
-    "openai"
-  );
-});
 
 test("extractMemoryTextFromRequestBody returns the LAST user message (string content)", () => {
   const body = {
@@ -81,6 +38,10 @@ test("extractMemoryTextFromRequestBody reads Responses-style input items", () =>
     input: [{ role: "user", type: "message", content: [{ type: "input_text", text: "hey" }] }],
   };
   assert.equal(extractMemoryTextFromRequestBody(inputBody), "hey");
+});
+
+test("extractMemoryTextFromRequestBody reads a bare string Responses input", () => {
+  assert.equal(extractMemoryTextFromRequestBody({ input: "  I prefer tea.  " }), "I prefer tea.");
 });
 
 test("extractMemoryTextFromRequestBody reads a string-content input item", () => {

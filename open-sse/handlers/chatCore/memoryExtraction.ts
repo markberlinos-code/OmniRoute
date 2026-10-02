@@ -1,37 +1,13 @@
 import { capMemoryExtractionText, MEMORY_EXTRACTION_TEXT_LIMIT } from "./logTruncation.ts";
 
-export function extractMemoryTextFromResponse(
-  response: Record<string, unknown> | null | undefined
-): string {
-  if (!response || typeof response !== "object") return "";
-
-  const openAIText = response?.choices?.[0]?.message?.content;
-  if (typeof openAIText === "string") {
-    return capMemoryExtractionText(openAIText.trim());
-  }
-
-  if (Array.isArray(response?.content)) {
-    const contentText = response.content
-      .filter(
-        (part: Record<string, unknown>) => part?.type === "text" && typeof part?.text === "string"
-      )
-      .map((part: Record<string, unknown>) => String(part.text).trim())
-      .filter(Boolean)
-      .join("\n");
-    if (contentText) return capMemoryExtractionText(contentText);
-  }
-
-  if (typeof response?.output_text === "string") {
-    return capMemoryExtractionText(response.output_text.trim());
-  }
-
-  return "";
-}
-
 export function extractMemoryTextFromRequestBody(
   body: Record<string, unknown> | null | undefined
 ): string {
   if (!body || typeof body !== "object") return "";
+
+  if (typeof body.input === "string" && body.input.trim()) {
+    return capMemoryExtractionText(body.input.trim());
+  }
 
   const messages = Array.isArray(body.messages) ? body.messages : null;
   if (messages && messages.length > 0) {

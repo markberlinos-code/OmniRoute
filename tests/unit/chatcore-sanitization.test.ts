@@ -680,7 +680,7 @@ test("chatCore skips memory injection when shouldInjectMemory returns false for 
   assert.deepEqual(call.body.messages, []);
 });
 
-test("chatCore extracts memories from Claude content arrays and Responses output_text payloads", async () => {
+test("chatCore extracts memories from the user's Claude content array and Responses input, never the model's reply", async () => {
   await settingsDb.updateSettings({
     memoryEnabled: true,
     memoryMaxTokens: 1024,
@@ -698,7 +698,9 @@ test("chatCore extracts memories from Claude content arrays and Responses output
     apiKeyInfo: { id: claudeKeyId, name: "Claude Memory Key" },
     body: {
       model: "claude-sonnet-4-6",
-      messages: [{ role: "user", content: [{ type: "text", text: "Remember this." }] }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "I like strongly typed APIs." }] },
+      ],
     },
     responseFactory: () =>
       new Response(
@@ -707,7 +709,7 @@ test("chatCore extracts memories from Claude content arrays and Responses output
           type: "message",
           role: "assistant",
           model: "claude-sonnet-4-6",
-          content: [{ type: "text", text: "I like strongly typed APIs." }],
+          content: [{ type: "text", text: "I'll use Zod for the schemas." }],
           stop_reason: "end_turn",
           usage: { input_tokens: 4, output_tokens: 3 },
         }),
@@ -726,7 +728,7 @@ test("chatCore extracts memories from Claude content arrays and Responses output
     apiKeyInfo: { id: responsesKeyId, name: "Responses Memory Key" },
     body: {
       model: "gpt-4o-mini",
-      input: "Remember this too.",
+      input: "I prefer TypeScript for backend services.",
     },
     responseFactory: () =>
       new Response(
@@ -735,7 +737,7 @@ test("chatCore extracts memories from Claude content arrays and Responses output
           object: "response",
           status: "completed",
           model: "gpt-4o-mini",
-          output_text: "I prefer TypeScript for backend services.",
+          output_text: "I always answer with code samples.",
           usage: {
             input_tokens: 3,
             output_tokens: 5,

@@ -122,7 +122,6 @@ export {
   stripStaleForwardingHeaders,
 };
 import {
-  extractMemoryTextFromResponse,
   extractMemoryTextFromRequestBody,
   resolveMemoryOwnerId,
 } from "./chatCore/memoryExtraction.ts";
@@ -4928,7 +4927,6 @@ export async function handleChatCore({
           responseToolSchemas
         )
       : responseBody;
-    const memoryExtractionResponse = translatedResponse;
 
     // T26: Strip markdown code blocks if provider format is Claude
     if (sourceFormat === "claude" && !stream) {
@@ -5014,15 +5012,13 @@ export async function handleChatCore({
       }
     );
 
+    // Facts come from the user's turn only. The patterns are first-person ("I'll use X",
+    // "I always X"); run on the model's reply they capture the model's own plan and
+    // re-inject it into every later request as if the user had said it.
     if (memoryOwnerId && memorySettings?.enabled && memorySettings.maxTokens > 0) {
       const requestMemoryText = extractMemoryTextFromRequestBody(body as Record<string, unknown>);
       if (requestMemoryText) {
         extractFacts(requestMemoryText, memoryOwnerId, pipelineSessionId);
-      }
-
-      const memoryText = extractMemoryTextFromResponse(memoryExtractionResponse);
-      if (memoryText) {
-        extractFacts(memoryText, memoryOwnerId, pipelineSessionId);
       }
     }
 
@@ -5646,13 +5642,6 @@ export async function handleChatCore({
       const requestMemoryText = extractMemoryTextFromRequestBody(body as Record<string, unknown>);
       if (requestMemoryText) {
         extractFacts(requestMemoryText, memoryOwnerId, pipelineSessionId);
-      }
-
-      const streamedMemoryText = extractMemoryTextFromResponse(
-        (streamResponseBody ?? null) as Record<string, unknown> | null
-      );
-      if (streamedMemoryText) {
-        extractFacts(streamedMemoryText, memoryOwnerId, pipelineSessionId);
       }
     }
 

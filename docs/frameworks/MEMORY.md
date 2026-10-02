@@ -10,8 +10,8 @@ lastUpdated: 2026-06-28
 > **Last updated:** 2026-06-28 — v3.8.40 (off-by-default + int8 quantization catch-up)
 
 OmniRoute provides persistent conversational memory keyed by API key (and
-optionally session id). Memories are extracted automatically from LLM responses
-via lightweight regex pattern matching and injected back into subsequent
+optionally session id). Memories are extracted automatically from the user's
+own messages via lightweight regex pattern matching and injected back into subsequent
 requests as a leading system message (or first user message for providers that
 reject the system role).
 
@@ -42,7 +42,7 @@ Client → /v1/chat/completions (apiKeyInfo resolved upstream)
     → retrieveMemories(apiKeyId, config)      # SQL + FTS5 + optional vector
     → injectMemory(body, memories, provider)  # system or user message
   → upstream provider call
-  → on response: extractFacts(text, apiKeyId, sessionId)  # non-blocking
+  → on success: extractFacts(lastUserText, apiKeyId, sessionId)  # non-blocking
     → setImmediate → createMemory(fact) per match
                    → embed(content) + upsertVector(id, vec)
 ```
@@ -338,12 +338,17 @@ Extraction is **regex-based**, not LLM-based — it runs in-process with
 - **Pattern patterns** → `MemoryType.FACTUAL`
   (e.g. `I usually …`, `I always …`, `I tend to …`)
 
+Only the last user turn of the request is scanned — never the model's reply.
+The patterns are first-person, so on model output they capture the model's own
+plan (`I'll use the Agent tool…`) and re-inject it into later requests as if the
+user had said it.
+
 Each match is sanitised (`trim`, whitespace-collapse, capped at 500 chars),
 deduplicated within the batch via a stable `factKey(category, content)`, and
 stored via `createMemory()` with metadata
-`{category, extractedAt, source: "llm_response"}`. Input text is capped at
+`{category, extractedAt, source: "user_message"}`. Input text is capped at
 64 KiB (`MAX_EXTRACTION_TEXT_LENGTH`) — when longer, the **tail** of the text
-is used so the most recent assistant content always participates.
+is used.
 
 `extractFactsFromText(text)` is exported for tests and returns the structured
 facts without storing them.
@@ -702,7 +707,7 @@ Benchmark on a typical 4-core x86 server (texts ~100 tokens each):
 
 ## Fact Extraction Patterns (v3.8.16+)
 
-The `extraction.ts` module (`src/lib/memory/extraction.ts`) uses **regex pattern matching** to extract structured facts from conversation messages. Understanding these patterns helps you tune extraction quality for your use case.
+The `extraction.ts` module (`src/lib/memory/extraction.ts`) uses **regex pattern matching** to extract structured facts from the user's messages. Understanding these patterns helps you tune extraction quality for your use case.
 
 ### Default Pattern Categories
 

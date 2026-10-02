@@ -1,5 +1,5 @@
 /**
- * Fact extraction from LLM responses.
+ * Fact extraction from user messages.
  * Parses text for user preferences, decisions, and patterns.
  * Stores extracted facts asynchronously (non-blocking).
  */
@@ -150,11 +150,12 @@ export function extractFactsFromText(text: string): ExtractedFact[] {
 }
 
 /**
- * Extract facts from an LLM response and store them asynchronously.
+ * Extract facts from the user's turn and store them asynchronously.
  * Non-blocking: fires-and-forgets via setImmediate.
- * Does NOT extract from tool call results (tool_calls check).
+ * Never pass model output here: the first-person patterns would store the model's own
+ * plan ("I'll use X") as a user fact and re-inject it into later requests.
  *
- * @param response - The LLM response text to parse
+ * @param response - The user message text to parse
  * @param apiKeyId - API key owning this memory
  * @param sessionId - Session context for the memory
  */
@@ -182,7 +183,7 @@ export function extractFacts(response: string, apiKeyId: string, sessionId: stri
         metadata: {
           category: fact.category,
           extractedAt: new Date().toISOString(),
-          source: "llm_response",
+          source: "user_message",
         },
         expiresAt: null,
       }).catch((err) => {

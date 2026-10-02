@@ -4,6 +4,21 @@
 
 ### 🐛 Bug Fixes (fork `route.mcp.az`, prod branch)
 
+- **fix(memory): stop storing the model's own narration as user memory and stop splitting tool cycles.**
+  Claude Code sessions kept receiving instructions nobody gave, framed as `Memory context: …` (e.g. "the
+  Agent tool with parallel subagents instead of Workflow", "User asked to perform a web search for …"),
+  carried over from unrelated projects. Root cause: fact extraction ran its first-person regexes
+  (`I'll use X`, `I always X`, `I decided X`) on the **model's reply**, so an agent narrating its plan was
+  stored as a user preference. Memory is pooled per API key, so these fragments were re-injected into
+  every later request from every project. Extraction now reads only the user's turn (and also a bare
+  string Responses `input`, which was previously ignored); the reply-side extractor was removed. Separately,
+  the cache-safe placement put the memory system message before the last `user` turn, which in an agent
+  loop is the `tool_result` for the preceding `tool_use` — so the memory landed between a tool call and its
+  result. It now anchors on the last user turn that is not a tool result. Facts already stored with
+  `source: "llm_response"` stay in the database until removed; new facts carry `source: "user_message"`.
+  Tests: new regressions in `memory-pipeline` and `memory-cache-safe-injection` (both failed before the
+  fix); all memory suites 482/482 (node) + 79/79 (vitest); `typecheck:core` clean.
+
 - **fix(sse): escalate Anthropic thinking-signature recovery when foreign-signed blocks sit in active tool cycle.**
   When a multi-turn conversation fell back to an alternate provider (e.g. DeepSeek, Kimi) and later returned to
   `claude`, the previous provider's thinking blocks retained foreign signatures. The existing conservative recovery
