@@ -27,6 +27,19 @@ jobs:
       packages: write
 
     steps:
+      # v3.8.51 enables the React Compiler; the webpack production pass then
+      # exceeds the 6144 MB V8 heap ceiling on the 7 GB hosted runner
+      # ("JavaScript heap out of memory"). Add swap and raise the ceiling below.
+      - name: Expand virtual memory (10 GB swap)
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 10G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=10240
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - uses: actions/checkout@v4
 
       - name: Set up Buildx
@@ -58,6 +71,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             OMNIROUTE_USE_TURBOPACK=0
+            OMNIROUTE_BUILD_MEMORY_MB=10240
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
