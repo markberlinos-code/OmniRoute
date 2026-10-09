@@ -305,7 +305,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@lobehub/icons": "^5.16.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@monaco-editor/react": "^4.7.0",
     "@ngrok/ngrok": "^1.7.0",
     "@swc/helpers": "0.5.23",
@@ -366,7 +366,7 @@
     "remark-gfm": "^4.0.1",
     "safe-regex": "^2.1.1",
     "selfsigned": "^5.5.0",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "smol-toml": "1.8.0",
     "socks": "^2.8.7",
     "sql.js": "^1.14.2",
@@ -489,7 +489,7 @@
     "onnxruntime-node": "1.30.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "fast-xml-parser": "^5.10.1",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "postcss": "^8.5.18",
     "ip-address": "^10.7.2",
     "qs": "^6.16.0",
@@ -512,7 +512,7 @@
       "undici": "^7.29.0"
     },
     "node-gyp": {
-      "undici": "^6.28.0"
+      "undici": "^6.28.1"
     },
     "concurrently": {
       "shell-quote": "^1.9.0"
